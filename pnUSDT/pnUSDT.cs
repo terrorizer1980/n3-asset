@@ -75,7 +75,7 @@ namespace pnUSDT
 
         public static void _deploy(object data, bool update)
         {
-            Assert(update, "Not first deploy");
+            Assert(!update, "Not first deploy");
             ContractMap.Put(OwnerKey, Owner);
         }
 
