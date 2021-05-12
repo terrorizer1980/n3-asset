@@ -39,7 +39,7 @@ namespace pnUSDT
         public static readonly StorageMap AllowanceMap = new StorageMap(Storage.CurrentContext, AllowancePrefix);
         public static readonly StorageMap ContractMap = new StorageMap(Storage.CurrentContext, ContractPrefix);
 
-        private static bool IsOwner() => Runtime.CheckWitness(Owner);
+        private static bool IsOwner() => Runtime.CheckWitness(GetOwner());
 
         // When this contract address is included in the transaction signature,
         // this method will be triggered as a VerificationTrigger to verify that the signature is correct.
