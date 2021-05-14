@@ -75,7 +75,7 @@ namespace pnUSDT
 
         public static void _deploy(object data, bool update)
         {
-            Assert(!update, "Not first deploy");
+            if (update) return;
             ContractMap.Put(OwnerKey, Owner);
         }
 
@@ -150,7 +150,7 @@ namespace pnUSDT
 
         public static UInt160 GetOwner()
         {
-            return (UInt160)ContractMap.Get(OwnerKey);
+            return ContractMap.Get<UInt160>(OwnerKey);
         }
 
         public static void Update(ByteString nefFile, string manifest)
