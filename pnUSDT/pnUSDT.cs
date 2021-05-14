@@ -16,14 +16,13 @@ namespace pnUSDT
     public class pnUSDT : SmartContract
     {
         #region Notifications
+
         [DisplayName("Transfer")]
         public static event Action<UInt160, UInt160, BigInteger> OnTransfer;
 
         [DisplayName("Notify")]
         public static event Action<string, object> Notify;
 
-        [DisplayName("Approval")]
-        public static event Action<UInt160, UInt160, BigInteger> ApproveEvent;
         #endregion
 
         //initial operator
@@ -31,12 +30,10 @@ namespace pnUSDT
         private static readonly UInt160 Owner = default;
         private static readonly byte[] SupplyKey = "sk".ToByteArray();
         private static readonly byte[] BalancePrefix = new byte[] { 0x01, 0x01 };
-        private static readonly byte[] AllowancePrefix = new byte[] { 0x01, 0x02 };
-        private static readonly byte[] ContractPrefix = new byte[] { 0x01, 0x03 };
+        private static readonly byte[] ContractPrefix = new byte[] { 0x01, 0x02 };
         private static readonly byte[] OwnerKey = "owner".ToByteArray();
 
         public static readonly StorageMap BalanceMap = new StorageMap(Storage.CurrentContext, BalancePrefix);
-        public static readonly StorageMap AllowanceMap = new StorageMap(Storage.CurrentContext, AllowancePrefix);
         public static readonly StorageMap ContractMap = new StorageMap(Storage.CurrentContext, ContractPrefix);
 
         private static bool IsOwner() => Runtime.CheckWitness(GetOwner());
@@ -84,12 +81,6 @@ namespace pnUSDT
             return (BigInteger)BalanceMap.Get(owner);
         }
 
-        public static BigInteger Allowance(UInt160 owner, UInt160 spender)
-        {
-            return (BigInteger)AllowanceMap.Get(((byte[])owner).Concat((byte[])spender));
-        }
-
-
         public static void Init(UInt160 proxyHash, BigInteger supply)
         {
             Assert(IsOwner(), "No authorization.");
@@ -110,17 +101,6 @@ namespace pnUSDT
 
             OnTransfer(null, proxyHash, increase);
         }
-
-        public static bool Approve(UInt160 owner, UInt160 spender, BigInteger amount)
-        {
-            Assert(amount > 0, "Invalid amount", amount);
-            Assert(Runtime.CheckWitness(owner) || owner.Equals(Runtime.CallingScriptHash), "Owner mismatch", Runtime.CallingScriptHash);
-
-            AllowanceMap.Put(((byte[])owner).Concat((byte[])spender), amount);
-            ApproveEvent(owner, spender, amount);
-            return true;
-        }
-
 
         public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data)
         {
