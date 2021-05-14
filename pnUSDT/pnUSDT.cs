@@ -13,6 +13,7 @@ namespace pnUSDT
     [ManifestExtra("Email", "dev@neo.org")]
     [ManifestExtra("Description", "This is a contract for USDT on Neo")]
     [ContractPermission("*")]
+    [SupportedStandards("NEP-17")]
     public class pnUSDT : SmartContract
     {
         #region Notifications
