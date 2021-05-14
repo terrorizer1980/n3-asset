@@ -102,7 +102,7 @@ namespace pnUSDT
             OnTransfer(null, proxyHash, increase);
         }
 
-        public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data)
+        public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data = null)
         {
             if (amount <= 0) throw new Exception("The parameter amount MUST be greater than 0.");
             if (!Runtime.CheckWitness(from) && !from.Equals(Runtime.CallingScriptHash)) throw new Exception("No authorization.");
@@ -133,7 +133,7 @@ namespace pnUSDT
             return ContractMap.Get<UInt160>(OwnerKey);
         }
 
-        public static void Update(ByteString nefFile, string manifest)
+        public static void Update(ByteString nefFile, string manifest, object data = null)
         {
             if (!IsOwner()) throw new Exception("No authorization.");
             ContractManagement.Update(nefFile, manifest, null);
