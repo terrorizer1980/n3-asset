@@ -36,21 +36,20 @@ namespace pnUSDT
         public static readonly StorageMap BalanceMap = new StorageMap(Storage.CurrentContext, BalancePrefix);
         public static readonly StorageMap ContractMap = new StorageMap(Storage.CurrentContext, ContractPrefix);
 
+        public static void _deploy(object data, bool update)
+        {
+            if (update) return;
+            ContractMap.Put(OwnerKey, Owner);
+        }
+
         private static bool IsOwner() => Runtime.CheckWitness(GetOwner());
+
+        public static UInt160 GetOwner() => ContractMap.Get<UInt160>(OwnerKey);
 
         // When this contract address is included in the transaction signature,
         // this method will be triggered as a VerificationTrigger to verify that the signature is correct.
         // For example, this method needs to be called when withdrawing token from the contract.
-        public static bool Verify() => IsOwner();
-
-        public static string Symbol() => "pnUSDT";
-
-        public static byte Decimals() => 6;
-
-        public static BigInteger TotalSupply()
-        {
-            return (BigInteger)ContractMap.Get(SupplyKey);
-        }
+        public static bool Verify() => IsOwner();       
 
         private static void SupplyPut(BigInteger value) => ContractMap.Put(SupplyKey, value);
 
@@ -60,6 +59,8 @@ namespace pnUSDT
 
         private static void AssetIncrease(UInt160 key, BigInteger value) => AssetPut(key, BalanceOf(key) + value);
 
+        private static void Remove(UInt160 key) => BalanceMap.Delete(key);
+
         private static void AssetReduce(UInt160 key, BigInteger value)
         {
             var oldValue = BalanceOf(key);
@@ -68,21 +69,42 @@ namespace pnUSDT
             else
                 AssetPut(key, oldValue - value);
         }
-        private static void Remove(UInt160 key) => BalanceMap.Delete(key);
 
-        public static void _deploy(object data, bool update)
+        #region Nep-17 Methods
+
+        public static string Symbol() => "pnUSDT";
+
+        public static byte Decimals() => 6;
+
+        public static BigInteger BalanceOf(UInt160 address) => (BigInteger)BalanceMap.Get(address);
+
+        public static BigInteger TotalSupply() => (BigInteger)ContractMap.Get(SupplyKey);
+
+        public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data = null)
         {
-            if (update) return;
-            ContractMap.Put(OwnerKey, Owner);
+            Assert(from.IsValid && to.IsValid, "The from address is invalid.");
+            Assert(amount > 0, "The parameter amount must be greater than 0.");
+            Assert(Runtime.CheckWitness(from) || from.Equals(Runtime.CallingScriptHash), "No authorization.");
+            Assert(BalanceOf(from) >= amount, "Insufficient balance.");
+
+            if (from == to) return true;
+
+            AssetReduce(from, amount);
+            AssetIncrease(to, amount);
+
+            OnTransfer(from, to, amount);
+
+            // Validate payable
+            if (ContractManagement.GetContract(to) != null)
+                Contract.Call(to, "onNEP17Payment", CallFlags.All, from, amount, data);
+            return true;
         }
 
-        public static BigInteger BalanceOf(UInt160 owner)
-        {
-            return (BigInteger)BalanceMap.Get(owner);
-        }
+        #endregion
 
         public static void Init(UInt160 proxyHash, BigInteger supply)
         {
+            Assert(proxyHash.IsValid, "The proxyHash address is invalid.");
             Assert(IsOwner(), "No authorization.");
             Assert((BigInteger)ContractMap.Get(SupplyKey) == 0, "InitSupply can only be set up one time");
 
@@ -94,54 +116,37 @@ namespace pnUSDT
 
         public static void Mint(UInt160 proxyHash, BigInteger increase)
         {
+            Assert(proxyHash.IsValid, "The proxyHash address is invalid.");
             Assert((BigInteger)ContractMap.Get(SupplyKey) > 0, "Need init first");
             Assert(IsOwner(), "No authorization.");
+
             SupplyIncrease(increase);
             AssetIncrease(proxyHash, increase);
 
             OnTransfer(null, proxyHash, increase);
-        }
-
-        public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data = null)
-        {
-            if (amount <= 0) throw new Exception("The parameter amount MUST be greater than 0.");
-            if (!Runtime.CheckWitness(from) && !from.Equals(Runtime.CallingScriptHash)) throw new Exception("No authorization.");
-            if (BalanceOf(from) < amount) throw new Exception("Insufficient balance.");
-            if (from == to) return true;
-
-            AssetReduce(from, amount);
-            AssetIncrease(to, amount);
-
-            OnTransfer(from, to, amount);
-
-            // Validate payable
-            if (ContractManagement.GetContract(to) != null)
-                Contract.Call(to, "onNEP17Payment", CallFlags.All, new object[] { from, amount, data });
-            return true;
-        }
+        }        
 
         public static bool TransferOwnership(UInt160 newOwner)
         {
             // transfer contract ownership from current owner to a new owner
-            Assert(Runtime.CheckWitness(GetOwner()), "transferOwnerShip: Only allowed to be called by owner.");
+            Assert(newOwner.IsValid, "The new owner address is invalid.");
+            Assert(IsOwner(), "No authorization.");
+
             ContractMap.Put(OwnerKey, newOwner);
             return true;
         }
 
-        public static UInt160 GetOwner()
-        {
-            return ContractMap.Get<UInt160>(OwnerKey);
-        }
-
         public static void Update(ByteString nefFile, string manifest, object data = null)
         {
-            if (!IsOwner()) throw new Exception("No authorization.");
-            ContractManagement.Update(nefFile, manifest, null);
+            Assert(IsOwner(), "No authorization.");
+
+            ContractManagement.Update(nefFile, manifest, data);
         }
 
         public static void Destroy()
         {
-            if (!IsOwner()) throw new Exception("No authorization.");
+            Assert(IsOwner(), "No authorization.");
+
             ContractManagement.Destroy();
         }
 
@@ -149,7 +154,6 @@ namespace pnUSDT
         {
             if (!condition)
             {
-                // TODO: uncomment next line on mainnet
                 Notify(errorType, result);
                 throw new InvalidOperationException(msg);
             }
