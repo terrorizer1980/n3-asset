@@ -14,10 +14,12 @@ namespace CrossChain_Contract
     public class CCMC : SmartContract
     {
         //TODO: fill in address
-        [InitialValue("NhGobEnuWX5rVdpnuZZAZExPoRs5J6D2Sb", ContractParameterType.Hash160)]
+        [InitialValue("NYxb4fSZVKAz8YsgaPK2WkT3KcAE9b3Vag", ContractParameterType.Hash160)]
         private static readonly UInt160 originOwner = default;
 
-        private static readonly byte[] chainID = new byte[] { 0x04 };
+        //To be compatible with (ByteString)merkleValue.TxParam.toChainID（11）
+        private static readonly byte[] chainID = new byte[] { 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
         //Reuqest prefix
         private static readonly byte[] requestIDPrefix = new byte[] { 0x01, 0x01 };
         private static readonly byte[] requestPreifx = new byte[] { 0x01, 0x02 };
@@ -48,28 +50,26 @@ namespace CrossChain_Contract
 
         [DisplayName("event")]
         public static event Action<string> notify;
-        [DisplayName("eventForbyteArray")]
-        public static event Action<byte[]> notifyForByteArray;
 
         #region admin
-        public static bool verify() => Runtime.CheckWitness(getOwner()) ;
-        public static void update(ByteString nefFile, string manifest, object data)
+        public static bool verify() => Runtime.CheckWitness(getOwner());
+        public static void update(ByteString nefFile, string manifest)
         {
             if (!verify()) throw new Exception("No authorization.");
-            ContractManagement.Update(nefFile, manifest, data);
+            ContractManagement.Update(nefFile, manifest);
         }
-        public static bool isOwner(UInt160 scriptHash) 
+        public static bool isOwner(UInt160 scriptHash)
         {
             if (scriptHash == getOwner()) return true;
             return false;
         }
-        public static UInt160 getOwner() 
+        public static UInt160 getOwner()
         {
             byte[] ownerPrefix1 = new byte[] { 0x04, 0x01 };
             ByteString rawOwner = Storage.Get(Storage.CurrentContext, ownerPrefix1);
             return rawOwner is null ? originOwner : (UInt160)rawOwner;
         }
-        public static bool setOwner(UInt160 ownerScriptHash) 
+        public static bool setOwner(UInt160 ownerScriptHash)
         {
             if (!verify()) throw new Exception("No authorization");
             Storage.Put(Storage.CurrentContext, ownerPrefix, ownerScriptHash);
@@ -78,7 +78,7 @@ namespace CrossChain_Contract
         #endregion
 
         #region Header
-        public static byte[] tryDeserializeHeader(byte[] Source) 
+        public static byte[] tryDeserializeHeader(byte[] Source)
         {
             Header header = deserializHeader(Source);
             return header.nextBookKeeper;
@@ -175,18 +175,18 @@ namespace CrossChain_Contract
             ChangeBookKeeperEvent(header.height, rawHeader);
             return true;
         }
-        public static BigInteger isGenesised()
+        public static bool isGenesised()
         {
             var value = Storage.Get(Storage.CurrentContext, isGenesisedKey);
-            return value is null ? 0 : (BigInteger)value;
+            return value is null ? true : false;
         }
         public static bool initGenesisBlock(Header header, byte[] pubKeyList)
         {
-            if (isGenesised() != 0) return false;
+            if (isGenesised()) return false;
             if (pubKeyList.Length % MCCHAIN_PUBKEY_LEN != 0)
             {
                 notify("Length of pubKeyList is illegal");
-                return false;
+                throw new ArgumentException();
             }
             BookKeeper bookKeeper = verifyPubkey(pubKeyList);
             Storage.Put(Storage.CurrentContext, currentEpochHeightPrefix, header.height);
@@ -194,7 +194,7 @@ namespace CrossChain_Contract
             Storage.Put(Storage.CurrentContext, mCKeeperPubKeysPrefix, StdLib.Serialize(bookKeeper.keepers));
             return true;
         }
-        public static byte[] tryVerifyPubkey(byte[] pubKeyList) 
+        public static byte[] tryVerifyPubkey(byte[] pubKeyList)
         {
             var bookKeeper = verifyPubkey(pubKeyList);
             return bookKeeper.nextBookKeeper;
@@ -272,9 +272,9 @@ namespace CrossChain_Contract
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        public static ECPoint getCompressPubKey(byte[] key) 
+        public static ECPoint getCompressPubKey(byte[] key)
         {
-            var point = (ECPoint)key.Range(2,33);
+            var point = (ECPoint)key.Range(2, 33);
             return point;
         }
         #endregion
@@ -295,8 +295,8 @@ namespace CrossChain_Contract
                 crossChainID = (byte[])CryptoLib.Sha256((ByteString)((byte[])Runtime.ExecutingScriptHash).Concat((byte[])tx.Hash)),
                 fromContract = caller
             };
-            var requestId = getRequestID(IdAsByte);
-            var resquestKey = putRequest(IdAsByte, (byte[])requestId, para);
+            BigInteger requestId = getRequestID(IdAsByte);
+            var resquestKey = putRequest(IdAsByte, requestId, para);
 
             //event
             CrossChainLockEvent(caller, para.fromContract, toChainID, resquestKey, para.args);
@@ -366,6 +366,8 @@ namespace CrossChain_Contract
             //check to chainID
             if ((ByteString)merkleValue.TxParam.toChainID != (ByteString)chainID)
             {
+                notify((ByteString)merkleValue.TxParam.toChainID);
+                notify((ByteString)chainID);
                 notify("Not Neo crosschain tx");
                 return false;
             }
@@ -390,11 +392,11 @@ namespace CrossChain_Contract
             {
                 UInt160 TargetContract = (UInt160)value.TxParam.toContract;
                 string TargetMethod = (string)(ByteString)value.TxParam.method;
-                object[] parameter = new object[] { value.TxParam.args, value.TxParam.fromContract, value.fromChainID };
+                object[] parameter = new object[] { value.TxParam.args, value.TxParam.fromContract, value.fromChainID};
                 bool DynamicCallResult = false;
                 try
                 {
-                    DynamicCallResult = (bool)Contract.Call(TargetContract, TargetMethod,  CallFlags.All, parameter);
+                    DynamicCallResult = (bool)Contract.Call(TargetContract, TargetMethod, CallFlags.All, parameter);
                 }
                 catch
                 {
@@ -416,20 +418,17 @@ namespace CrossChain_Contract
                 return false;
             }
         }
-        private static ByteString getRequestID(byte[] chainID)
+        private static BigInteger getRequestID(byte[] IdAsBytes)
         {
-            ByteString requestID = Storage.Get(Storage.CurrentContext, requestIDPrefix.Concat(chainID));
-            if (requestID != null)
-            {
-                return requestID;
-            }
-            return (ByteString)new byte[] { 0x00 };
+            ByteString requestID = Storage.Get(Storage.CurrentContext, requestIDPrefix.Concat(IdAsBytes));
+            return requestID is null ? 0 : (BigInteger)requestID;
         }
-        private static byte[] putRequest(byte[] chainID, byte[] transactionHash, CrossChainTxParameter para)
+        private static byte[] putRequest(byte[] chainID, BigInteger requestID, CrossChainTxParameter para)
         {
-            byte[] requestKey = requestPreifx.Concat(chainID).Concat(transactionHash);
+            byte[] requestKey = requestPreifx.Concat(chainID).Concat(requestID.ToByteArray());
             Storage.Put(Storage.CurrentContext, requestKey, WriteCrossChainTxParameter(para));
-            Storage.Put(Storage.CurrentContext, requestIDPrefix.Concat(chainID), transactionHash);
+            requestID = requestID + 1;
+            Storage.Put(Storage.CurrentContext, requestIDPrefix.Concat(chainID), requestID);
             return requestKey;
         }
         #endregion
@@ -449,7 +448,7 @@ namespace CrossChain_Contract
             int n = keepers.Length;
             bool fSuccess = true;
             for (int i = 0, j = 0; fSuccess && i < m && j < n;)
-            {       
+            {
                 ByteString signedMessage = (ByteString)signList.Range(i * MCCHAIN_SIGNATURE_LEN, MCCHAIN_SIGNATUREWITHOUTV_LEN);
                 try
                 {
@@ -485,7 +484,7 @@ namespace CrossChain_Contract
                         i++;
                     j++;
                     if (m - i > n - j)
-                    {                      
+                    {
                         fSuccess = false;
                     }
                 }
@@ -493,7 +492,7 @@ namespace CrossChain_Contract
                 {
                     notify("verifySig exception");
                 }
-                finally 
+                finally
                 {
                     notify("Number: " + m + i + n + j);
                 }
@@ -505,7 +504,7 @@ namespace CrossChain_Contract
         #region crossChain IO
         private static byte[] WriteCrossChainTxParameter(CrossChainTxParameter para)
         {
-            byte[] result = new byte[] { 0x00 };
+            byte[] result = new byte[] { };
             result = writeVarBytes(result, para.txHash);
             result = writeVarBytes(result, para.crossChainID);
             result = writeVarBytes(result, para.fromContract);
@@ -517,9 +516,9 @@ namespace CrossChain_Contract
             return result;
         }
 
-        public static bool tryDeserializeMerkleValue(byte[] Source) 
+        public static bool tryDeserializeMerkleValue(byte[] Source)
         {
-            try 
+            try
             {
                 ToMerkleValue result = deserializMerkleValue(Source);
                 return true;
@@ -617,7 +616,7 @@ namespace CrossChain_Contract
             for (int i = 0; i < size; i++)
             {
                 ByteString isChildren;
-                (isChildren, offSet)= readBytes(path, offSet, 1);
+                (isChildren, offSet) = readBytes(path, offSet, 1);
                 ByteString node;
                 (node, offSet) = readBytes(path, offSet, 32);
                 if (isChildren == (ByteString)new byte[] { 0 })
@@ -633,7 +632,7 @@ namespace CrossChain_Contract
             {
                 return (byte[])value;
             }
-            else 
+            else
             {
                 throw new Exception("proof not match root");
             }
@@ -663,12 +662,12 @@ namespace CrossChain_Contract
         }
         #endregion
         #region crypto
-        public static byte[] Hash256(byte[] message) 
+        public static byte[] Hash256(byte[] message)
         {
             return (byte[])CryptoLib.Sha256(CryptoLib.Sha256((ByteString)message));
         }
 
-        public static byte[] Hash160(byte[] message) 
+        public static byte[] Hash160(byte[] message)
         {
             return (byte[])CryptoLib.ripemd160(CryptoLib.Sha256((ByteString)message));
         }
@@ -699,7 +698,7 @@ namespace CrossChain_Contract
         public static byte[] writeUint16(byte[] Source, BigInteger value)
         {
             if (value > UInt16.MaxValue) throw new ArgumentException();
-            return Source.Concat(padRight(convertUintToByteArray(value), 2 ));
+            return Source.Concat(padRight(convertUintToByteArray(value), 2));
         }
 
         /// <summary>
@@ -720,7 +719,7 @@ namespace CrossChain_Contract
         /// <param name="offset"></param>
         /// <returns></returns>
 
-        public static (ByteString, int) readVarBytes(byte[] buffer, int offset) 
+        public static (ByteString, int) readVarBytes(byte[] buffer, int offset)
         {
             (var count, var newOffset) = readVarInt(buffer, offset);
             return readBytes(buffer, newOffset, (int)count);
@@ -737,19 +736,19 @@ namespace CrossChain_Contract
             (ByteString fb, int newOffset) = readBytes(buffer, offset, 1); // read the first byte
             if (fb.Equals((ByteString)new byte[] { 0xfd }))
             {
-                return (new BigInteger(buffer.Range(newOffset, 2)), newOffset + 2 );
+                return (new BigInteger(buffer.Range(newOffset, 2)), newOffset + 2);
             }
-            else if (fb.Equals( (ByteString)new byte[] { 0xfe }))
+            else if (fb.Equals((ByteString)new byte[] { 0xfe }))
             {
-                return (new BigInteger(buffer.Range(newOffset, 4)), newOffset + 4 );
+                return (new BigInteger(buffer.Range(newOffset, 4)), newOffset + 4);
             }
             else if (fb.Equals((ByteString)new byte[] { 0xff }))
             {
-                return (new BigInteger(buffer.Range(newOffset, 8)), newOffset + 8 );
+                return (new BigInteger(buffer.Range(newOffset, 8)), newOffset + 8);
             }
             else
             {
-                return (new BigInteger(((byte[])fb).Concat(new byte[] { 0x00 })), newOffset );
+                return (new BigInteger(((byte[])fb).Concat(new byte[] { 0x00 })), newOffset);
             }
         }
 
@@ -763,29 +762,30 @@ namespace CrossChain_Contract
         {
             if (value < 0)
             {
-                return source;
+                notify("WVI: value should be positive");
+                throw new ArgumentException();
             }
             else if (value < 0xFD)
             {
-                var v = padRight(value.ToByteArray().Reverse(), 1);
+                var v = padRight(value.ToByteArray().Reverse().Last(1), 1);
                 return source.Concat(v);
             }
             else if (value <= 0xFFFF) // 0xff, need to pad 1 0x00
             {
                 byte[] length = new byte[] { 0xFD };
-                var v = padRight(value.ToByteArray().Reverse(), 2);
+                var v = padRight(value.ToByteArray().Reverse().Last(2), 2);
                 return source.Concat(length).Concat(v);
             }
             else if (value <= 0XFFFFFFFF) //0xffffff, need to pad 1 0x00 
             {
                 byte[] length = new byte[] { 0xFE };
-                var v = padRight(value.ToByteArray().Reverse(), 4);
+                var v = padRight(value.ToByteArray().Reverse().Last(4), 4);
                 return source.Concat(length).Concat(v);
             }
             else //0x ff ff ff ff ff, need to pad 3 0x00
             {
                 byte[] length = new byte[] { 0xFF };
-                var v = padRight(value.ToByteArray().Reverse(), 8);
+                var v = padRight(value.ToByteArray().Reverse().Last(8), 8);
                 return source.Concat(length).Concat(v);
             }
         }
@@ -797,15 +797,15 @@ namespace CrossChain_Contract
         /// <param name="offset"></param>
         /// <param name="count"></param>
         /// <returns></returns>
-        public static (ByteString, int) readBytes(byte[] buffer, int offset, int count) 
+        public static (ByteString, int) readBytes(byte[] buffer, int offset, int count)
         {
-            if (offset + count > buffer.Length) 
+            if (offset + count > buffer.Length)
             {
                 notify("read Bytes fail");
                 throw new ArgumentException();
             }
             return ((ByteString)buffer.Range(offset, count), offset + count);
-            
+
         }
 
         /// <summary>
@@ -819,7 +819,8 @@ namespace CrossChain_Contract
             var l = value.Length;
             if (l > length)
             {
-                value = value.Take(length);
+                notify("size exceed");
+                throw new ArgumentException();
             }
             for (int i = 0; i < length - l; i++)
             {
@@ -839,19 +840,6 @@ namespace CrossChain_Contract
                 return Source;
             }
         }
-
-        ///// <summary>
-        ///// Tested, 将Biginteger转换成byteArray, 会在首位添加符号位0x00
-        ///// </summary>
-        ///// <param name="number"></param>
-        ///// <returns></returns>
-        //public static byte[] convertBigintegerToByteArray(BigInteger number) 
-        //{
-        //    var temp = (byte[])(object)number;
-        //    byte[] vs = temp.ToByteString().ToByteArray().Reverse();//ToByteString修改虚拟机类型， Reverse转换端序
-        //    return vs;
-
-        //}
 
         /// <summary>
         /// Tested, 将正Biginteger转换成byteArray,负数抛出异常, 返回结果大端序

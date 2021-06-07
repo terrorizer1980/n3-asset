@@ -21,12 +21,12 @@ namespace pnUSDT
         public static event Action<UInt160, UInt160, BigInteger> OnTransfer;
 
         [DisplayName("Notify")]
-        public static event Action<string, object> Notify;
+        public static event Action<string, object, object> Notify;
 
         #endregion
 
         //initial operator
-        [InitialValue("NWu2gb7PzhZb4ci9LvW4gBYAQFMGb1s1o7", ContractParameterType.Hash160)]
+        [InitialValue("NYxb4fSZVKAz8YsgaPK2WkT3KcAE9b3Vag", ContractParameterType.Hash160)]
         private static readonly UInt160 Owner = default;
         private static readonly byte[] SupplyKey = "sk".ToByteArray();
         private static readonly byte[] BalancePrefix = new byte[] { 0x01, 0x01 };
@@ -44,7 +44,7 @@ namespace pnUSDT
 
         private static bool IsOwner() => Runtime.CheckWitness(GetOwner());
 
-        public static UInt160 GetOwner() => ContractMap.Get<UInt160>(OwnerKey);
+        public static UInt160 GetOwner() => (UInt160)ContractMap.Get(OwnerKey);
 
         // When this contract address is included in the transaction signature,
         // this method will be triggered as a VerificationTrigger to verify that the signature is correct.
@@ -72,7 +72,7 @@ namespace pnUSDT
 
         #region Nep-17 Methods
 
-        public static string Symbol() => "pnUSDT";
+        public static string Symbol() => "pnUSDT1";
 
         public static byte Decimals() => 6;
 
@@ -82,7 +82,8 @@ namespace pnUSDT
 
         public static bool Transfer(UInt160 from, UInt160 to, BigInteger amount, object data = null)
         {
-            Assert(from.IsValid && to.IsValid, "The from address is invalid.");
+            Assert(from.Length == 20, "The from address is invalid.");
+            Assert(to.Length == 20, "The to address is invalid.");
             Assert(amount > 0, "The parameter amount must be greater than 0.");
             Assert(Runtime.CheckWitness(from) || from.Equals(Runtime.CallingScriptHash), "No authorization.");
             Assert(BalanceOf(from) >= amount, "Insufficient balance.");
@@ -136,11 +137,11 @@ namespace pnUSDT
             return true;
         }
 
-        public static void Update(ByteString nefFile, string manifest, object data = null)
+        public static void Update(ByteString nefFile, string manifest)
         {
             Assert(IsOwner(), "No authorization.");
 
-            ContractManagement.Update(nefFile, manifest, data);
+            ContractManagement.Update(nefFile, manifest);
         }
 
         public static void Destroy()
@@ -154,7 +155,7 @@ namespace pnUSDT
         {
             if (!condition)
             {
-                Notify(errorType, result);
+                Notify(errorType, result, msg);
                 throw new InvalidOperationException(msg);
             }
         }
