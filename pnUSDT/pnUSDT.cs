@@ -14,6 +14,7 @@ namespace pnUSDT
     [ManifestExtra("Description", "This is a contract for USDT on Neo")]
     [SupportedStandards("NEP-17")]
     [ContractPermission("*")]
+    [SupportedStandards("NEP-17")]
     public class pnUSDT : SmartContract
     {
         #region Notifications
