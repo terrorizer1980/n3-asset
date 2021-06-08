@@ -12,6 +12,7 @@ namespace pnUSDT
     [ManifestExtra("Author", "Neo")]
     [ManifestExtra("Email", "dev@neo.org")]
     [ManifestExtra("Description", "This is a contract for USDT on Neo")]
+    [SupportedStandards("NEP-17")]
     [ContractPermission("*")]
     public class pnUSDT : SmartContract
     {
@@ -72,7 +73,7 @@ namespace pnUSDT
 
         #region Nep-17 Methods
 
-        public static string Symbol() => "pnUSDT1";
+        public static string Symbol() => "pnUSDT";
 
         public static byte Decimals() => 6;
 

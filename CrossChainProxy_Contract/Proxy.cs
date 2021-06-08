@@ -16,19 +16,20 @@ namespace CrossChainProxy_Contract
         private static readonly byte[] CCMCScriptHash = default;
 
         [InitialValue("NYxb4fSZVKAz8YsgaPK2WkT3KcAE9b3Vag", ContractParameterType.Hash160)]
-        private static readonly UInt160 InitOwner = default;
+        private static readonly UInt160 superOwner = default;
 
-        private static readonly byte[] ProxyHashPrefix = new byte[] { 0x01, 0x01 };
-        private static readonly byte[] AssetHashPrefix = new byte[] { 0x01, 0x02 };
-        private static readonly byte[] AssetRelativeAccuracyPrefix = new byte[] { 0x01, 0x03 };
-        private static readonly byte[] PauseKey = new byte[] { 0x01, 0x04 };
-        private static readonly byte[] FromAssetHashMapKey = new byte[] { 0x01, 0x05 }; // "FromAssetList";
-        private static readonly byte[] OperatorKey = new byte[] { 0x01, 0x06 };
+        private static readonly byte[] proxyHashPrefix = new byte[] { 0x01, 0x01 };
+        private static readonly byte[] assetHashPrefix = new byte[] { 0x01, 0x02 };
+        private static readonly byte[] assetRelativeAccuracyPrefix = new byte[] { 0x01, 0x03 };
+        private static readonly byte[] pauseKey = new byte[] { 0x01, 0x04 };
+        private static readonly byte[] fromAssetHashMapKey = new byte[] { 0x01, 0x05 }; // "FromAssetList";
+        private static readonly byte[] operatorKey = new byte[] { 0x01, 0x06 };
+        private static readonly byte[] superAdminKey = new byte[] { 0x01, 0x07 };
         private static readonly string mapName = "asset";
         private static readonly StorageMap assetMap = new StorageMap(Storage.CurrentContext, mapName);
 
         // Events
-        public static event Action<UInt160, byte[]> TransferOwnershipEvent;
+        public static event Action<UInt160> TransferOwnershipEvent;
         public static event Action<byte[], byte[], BigInteger, UInt160, byte[], BigInteger> LockEvent;
         public static event Action<byte[], ByteString, BigInteger> UnlockEvent;
         public static event Action<BigInteger, byte[]> BindProxyHashEvent;
@@ -40,37 +41,78 @@ namespace CrossChainProxy_Contract
 
         public static void _deploy(object data, bool update)
         {
-            Storage.Put(Storage.CurrentContext, OperatorKey, InitOwner);
-            OnDeploy(OperatorKey, InitOwner);
+            Storage.Put(Storage.CurrentContext, superAdminKey, superOwner);
+            OnDeploy(superAdminKey, superOwner);
         }
 
-        public static bool Pause()
+        // used to upgrade this proxy contract
+        public static bool Update(ByteString nefFile, string manifest)
         {
-            Assert(Runtime.CheckWitness(GetOperator()), "pause: CheckWitness failed!");
-            Storage.Put(Storage.CurrentContext, PauseKey, new byte[] { 0x01 });
+            Assert(IsSuperAdmin(), "upgrade: CheckWitness failed!");
+            ContractManagement.Update(nefFile, manifest);
             return true;
         }
 
-        public static bool Unpause()
+        public static bool IsSuperAdmin()
         {
-            Assert(Runtime.CheckWitness(GetOperator()), "pause: CheckWitness failed!");
-            Storage.Delete(Storage.CurrentContext, PauseKey);
+            UInt160 superOwner = (UInt160)Storage.Get(Storage.CurrentContext, superAdminKey);
+            return Runtime.CheckWitness(superOwner);
+        }
+
+        public static bool SetOperator(UInt160 operatorAddress)
+        {
+            Assert(IsSuperAdmin(), "check superAdmin fail");
+            Storage.Put(Storage.CurrentContext, operatorKey.Concat(operatorAddress), 1);
+            return true;
+        }
+
+        public static bool RemoveOperator(UInt160 operatorAddress)
+        {
+            Assert(IsSuperAdmin(), "check superAdmin fail");
+            Storage.Delete(Storage.CurrentContext, operatorKey.Concat(operatorAddress));
+            return true;
+        }
+
+        public static bool CheckOperatorSign(UInt160 operatorAddress)
+        {
+            ByteString result = Storage.Get(Storage.CurrentContext, operatorKey.Concat(operatorAddress));
+            if (result is null)
+            {
+                return false;
+            }
+            else
+            {
+                return Runtime.CheckWitness(operatorAddress);
+            }
+        }
+
+        public static bool Pause(UInt160 operatorAddress)
+        {
+            Assert(CheckOperatorSign(operatorAddress), "pause: CheckWitness failed!");
+            Storage.Put(Storage.CurrentContext, pauseKey, new byte[] { 0x01 });
+            return true;
+        }
+
+        public static bool Unpause(UInt160 operatorAddress)
+        {
+            Assert(CheckOperatorSign(operatorAddress), "unpause: CheckWitness failed!");
+            Storage.Delete(Storage.CurrentContext, pauseKey);
             return true;
         }
 
         public static bool IsPaused()
         {
-            return Storage.Get(Storage.CurrentContext, PauseKey).Equals(new byte[] { 0x01 });
+            return Storage.Get(Storage.CurrentContext, pauseKey).Equals(new byte[] { 0x01 });
         }
 
-        public static bool unlockTimeoutAsset(UInt160 assetHash, UInt160 toAddress, BigInteger amount)
+        public static bool UnlockTimeoutAsset(UInt160 assetHash, UInt160 toAddress, BigInteger amount)
         {
-            Assert(isTimeout(), "Time not out yet");
-            Assert(Runtime.CheckWitness(GetOperator()), "CheckWitness failed!");
-            return (bool)Contract.Call(assetHash, "transfer", CallFlags.All, Runtime.ExecutingScriptHash, toAddress, amount);
+            Assert(IsTimeout(), "Time not out yet");
+            Assert(IsSuperAdmin(), "CheckWitness failed!");
+            return (bool)Contract.Call(assetHash, "transfer", CallFlags.All, Runtime.ExecutingScriptHash, toAddress, amount, null);
         }
 
-        public static bool isTimeout()
+        public static bool IsTimeout()
         {
             ulong TimeoutPoint = 100; //TODO: 部署前讨论好解锁的高度， 并修改
             if (Runtime.Time >= TimeoutPoint)
@@ -83,35 +125,29 @@ namespace CrossChainProxy_Contract
             }
         }
 
-        public static bool TransferOwnership(byte[] newOperator)
+        public static bool TransferOwnership(UInt160 newSuperAdmin)
         {
-            Assert(newOperator.Length == 20, "transferOwnership: newOperator.Length != 20");
-            UInt160 operator_ = (UInt160)Storage.Get(Storage.CurrentContext, OperatorKey);
-            Assert(Runtime.CheckWitness(operator_), "transferOwnership: CheckWitness failed!");
-            Storage.Put(Storage.CurrentContext, OperatorKey, newOperator);
-            TransferOwnershipEvent(operator_, newOperator);
+            Assert(newSuperAdmin.Length == 20, "transferOwnership: newOperator.Length != 20");
+            Assert(IsSuperAdmin(), "transferOwnership: CheckWitness failed!");
+            Storage.Put(Storage.CurrentContext, superAdminKey, newSuperAdmin);
+            TransferOwnershipEvent(newSuperAdmin);
             return true;
-        }
-
-        public static UInt160 GetOperator()
-        {
-            return (UInt160)Storage.Get(Storage.CurrentContext, OperatorKey);
         }
 
         // check payable
         public static bool GetPaymentStatus() => ((BigInteger)assetMap.Get("enable")).Equals(1);
 
         // enable payment
-        public static void EnablePayment()
+        public static void EnablePayment(UInt160 operatorAddress)
         {
-            Assert(Runtime.CheckWitness((UInt160)Storage.Get(Storage.CurrentContext, OperatorKey)), "No authorization.");
+            Assert(CheckOperatorSign(operatorAddress), "No authorization.");
             assetMap.Put("enable", 1);
         }
 
         // disable payment
-        public static void DisablePayment()
+        public static void DisablePayment(UInt160 operatorAddress)
         {
-            Assert(Runtime.CheckWitness((UInt160)Storage.Get(Storage.CurrentContext, OperatorKey)), "No authorization.");
+            Assert(CheckOperatorSign(operatorAddress), "No authorization.");
             assetMap.Put("enable", 0);
         }
 
@@ -129,29 +165,25 @@ namespace CrossChainProxy_Contract
         }
 
         // add target proxy contract hash according to chain id into contract storage
-        public static bool BindProxyHash(BigInteger toChainId, byte[] toProxyHash)
+        public static bool BindProxyHash(BigInteger toChainId, byte[] toProxyHash, UInt160 operator_)
         {
             Assert(toChainId != chainId, "bindProxyHash: toChainId is negative or equal to 44.");
             Assert(toProxyHash.Length > 0, "bindProxyHash: toProxyHash.Length == 0");
-            UInt160 operator_ = (UInt160)Storage.Get(Storage.CurrentContext, OperatorKey);
-            Assert(Runtime.CheckWitness(operator_), (ByteString)("bindProxyHash: CheckWitness failed, ".ToByteArray().Concat(operator_)));
-            Storage.Put(Storage.CurrentContext, ProxyHashPrefix.Concat(padRight(toChainId.ToByteArray(), 8)), toProxyHash);
+            Assert(CheckOperatorSign(operator_), (ByteString)("bindProxyHash: CheckWitness failed, ".ToByteArray().Concat(operator_)));
+            Storage.Put(Storage.CurrentContext, proxyHashPrefix.Concat(padRight(toChainId.ToByteArray(), 8)), toProxyHash);
             BindProxyHashEvent(toChainId, toProxyHash);
             return true;
         }
 
         // add target asset contract hash according to local asset hash & chain id into contract storage
-        public static bool BindAssetHash(UInt160 fromAssetHash, BigInteger toChainId, byte[] toAssetHash, BigInteger relativeAccuracy)
+        public static bool BindAssetHash(UInt160 fromAssetHash, BigInteger toChainId, byte[] toAssetHash, BigInteger relativeAccuracy, UInt160 operator_)
         {
             Assert(toChainId != chainId, "bindAssetHash: toChainId cannot be negative or equal to 44.");
-
-            UInt160 operator_ = (UInt160)Storage.Get(Storage.CurrentContext, OperatorKey);
-            Assert(Runtime.CheckWitness(operator_), (ByteString)("bindAssetHash: CheckWitness failed! ".ToByteArray().Concat(operator_)));
-
+            Assert(CheckOperatorSign(operator_), (ByteString)("bindAssetHash: CheckWitness failed! ".ToByteArray().Concat(operator_)));
             // Add fromAssetHash into storage so as to be able to be transferred into newly upgraded contract
             Assert(AddFromAssetHash(fromAssetHash), "bindAssetHash: addFromAssetHash failed!");
-            Storage.Put(Storage.CurrentContext, AssetHashPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)), toAssetHash);
-            Storage.Put(Storage.CurrentContext, AssetRelativeAccuracyPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)), relativeAccuracy);
+            Storage.Put(Storage.CurrentContext, assetHashPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)), toAssetHash);
+            Storage.Put(Storage.CurrentContext, assetRelativeAccuracyPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)), relativeAccuracy);
             BindAssetHashEvent(fromAssetHash, toChainId, toAssetHash);
             return true;
         }
@@ -159,7 +191,7 @@ namespace CrossChainProxy_Contract
         private static bool AddFromAssetHash(UInt160 newAssetHash)
         {
             Map<UInt160, bool> assetHashMap = new Map<UInt160, bool>();
-            ByteString assetHashMapInfo = Storage.Get(Storage.CurrentContext, FromAssetHashMapKey);
+            ByteString assetHashMapInfo = Storage.Get(Storage.CurrentContext, fromAssetHashMapKey);
             if (assetHashMapInfo is null)
             {
                 assetHashMap[newAssetHash] = true;
@@ -178,7 +210,7 @@ namespace CrossChainProxy_Contract
             }
             // Make sure fromAssetHash has balanceOf method
             BigInteger balance = GetAssetBalance(newAssetHash);
-            Storage.Put(Storage.CurrentContext, FromAssetHashMapKey, StdLib.Serialize(assetHashMap));
+            Storage.Put(Storage.CurrentContext, fromAssetHashMapKey, StdLib.Serialize(assetHashMap));
             return true;
         }
 
@@ -192,18 +224,18 @@ namespace CrossChainProxy_Contract
         // get target proxy contract hash according to chain id
         public static UInt160 GetProxyHash(BigInteger toChainId)
         {
-            return (UInt160)Storage.Get(Storage.CurrentContext, ProxyHashPrefix.Concat((padRight(toChainId.ToByteArray(), 8))));
+            return (UInt160)Storage.Get(Storage.CurrentContext, proxyHashPrefix.Concat((padRight(toChainId.ToByteArray(), 8))));
         }
 
         // get target asset contract hash according to local asset hash & chain id
         public static UInt160 GetAssetHash(byte[] fromAssetHash, BigInteger toChainId)
         {
-            return (UInt160)Storage.Get(Storage.CurrentContext, AssetHashPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)));
+            return (UInt160)Storage.Get(Storage.CurrentContext, assetHashPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)));
         }
 
         public static BigInteger GetAssetRelativeAccuracy(byte[] fromAssetHash, BigInteger toChainId)
         {
-            var rawAccuracy = Storage.Get(Storage.CurrentContext, AssetRelativeAccuracyPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)));
+            var rawAccuracy = Storage.Get(Storage.CurrentContext, assetRelativeAccuracyPrefix.Concat(fromAssetHash).Concat(padRight(toChainId.ToByteArray(), 8)));
             return (rawAccuracy is null ? 1 : (BigInteger)rawAccuracy);
         }
 
@@ -270,14 +302,6 @@ namespace CrossChainProxy_Contract
             bool success = (bool)Contract.Call((UInt160)toAssetHash, "transfer", CallFlags.All, Params);
             Assert(success, "unlock: Failed to transfer NEP5 token From Nep5Proxy to toAddress.");
             UnlockEvent(toAssetHash, toAddress, amount);
-            return true;
-        }
-
-        // used to upgrade this proxy contract
-        public static bool Update(ByteString nefFile, string manifest)
-        {
-            Assert(Runtime.CheckWitness((UInt160)Storage.Get(Storage.CurrentContext, OperatorKey)), "upgrade: CheckWitness failed!");
-            ContractManagement.Update(nefFile, manifest);
             return true;
         }
 
