@@ -178,7 +178,7 @@ namespace CrossChain_Contract
         public static bool isGenesised()
         {
             var value = Storage.Get(Storage.CurrentContext, isGenesisedKey);
-            return value is null ? true : false;
+            return value is null ? false : true;
         }
         public static bool initGenesisBlock(Header header, byte[] pubKeyList)
         {
